@@ -1,0 +1,220 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CloudStore - Serverless File Manager
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 10
+    Environment:
+      Variables:
+        BUCKET_NAME: cloudstore-shravanidesai-3305
+        TABLE_NAME: cloudstore-files
+
+Resources:
+  FilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cloudstore-files
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: file_id
+          AttributeType: S
+        - AttributeName: owner
+          AttributeType: S
+      KeySchema:
+        - AttributeName: file_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: owner-index
+          KeySchema:
+            - AttributeName: owner
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  CloudStoreApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: cloudstore-api
+      StageName: prod
+
+  UploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cloudstore-upload
+      CodeUri: functions/upload_file/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "arn:aws:s3:::cloudstore-shravanidesai-3305/uploads/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cloudstore-files"
+      Events:
+        UploadApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CloudStoreApi
+            Path: /upload
+            Method: POST
+
+  DownloadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cloudstore-download
+      CodeUri: functions/download_file/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::cloudstore-shravanidesai-3305/uploads/*"
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cloudstore-files"
+      Events:
+        DownloadApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CloudStoreApi
+            Path: /file/{file_id}
+            Method: GET
+
+  ListFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cloudstore-list
+      CodeUri: functions/list_files/
+      Handler: handler.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:Query
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cloudstore-files"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/cloudstore-files/index/owner-index"
+      Events:
+        ListApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CloudStoreApi
+            Path: /files
+            Method: GET
+
+  UploadErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-upload-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-upload
+      Statistic: Sum
+      Period: 60
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+  UploadThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-upload-throttles
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-upload
+      Statistic: Sum
+      Period: 60
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+  DownloadErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-download-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-download
+      Statistic: Sum
+      Period: 60
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+  DownloadThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-download-throttles
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-download
+      Statistic: Sum
+      Period: 60
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+  ListErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-list-errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-list
+      Statistic: Sum
+      Period: 60
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+  ListThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cloudstore-list-throttles
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: cloudstore-list
+      Statistic: Sum
+      Period: 60
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${CloudStoreApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  FilesTable:
+    Value: !Ref FilesTable
+  UploadFunction:
+    Value: !Ref UploadFunction
+  DownloadFunction:
+    Value: !Ref DownloadFunction
+  ListFunction:
+    Value: !Ref ListFunction
